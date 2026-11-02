@@ -19,7 +19,8 @@ const DEFAULT_SETTINGS = {
   ],
   fixed: [],
   income: [],
-  paid: {}
+  paid: {},
+  watchlist: ['hell', 'rožok', 'šunka', 'syr', 'maslo', 'mlieko', 'vajcia', 'kuracie']
 };
 
 const eur = new Intl.NumberFormat('sk-SK', { style: 'currency', currency: 'EUR' });
@@ -40,11 +41,12 @@ function load() {
     if (s && s.settings) {
       s.queue = s.queue || [];
       s.tx = s.tx || [];
+      s.deals = s.deals || [];
       s.conn = s.conn || { url: '', token: '' };
       return s;
     }
   } catch (e) { /* prázdne úložisko */ }
-  return { tx: [], settings: clone(DEFAULT_SETTINGS), queue: [], conn: { url: '', token: '' }, lastSync: null };
+  return { tx: [], deals: [], dealsScanned: '', settings: clone(DEFAULT_SETTINGS), queue: [], conn: { url: '', token: '' }, lastSync: null };
 }
 
 function save() {
@@ -66,6 +68,7 @@ function normalizeSettings(s) {
   out.fixed = (out.fixed || []).map(f => ({ id: String(f.id || uid()), name: String(f.name || ''), amount: Number(f.amount) || 0 }));
   out.income = (out.income || []).map(f => ({ id: String(f.id || uid()), name: String(f.name || ''), amount: Number(f.amount) || 0 }));
   out.paid = out.paid || {};
+  out.watchlist = Array.isArray(out.watchlist) ? out.watchlist : ['hell', 'rožok', 'šunka', 'syr', 'maslo', 'mlieko', 'vajcia', 'kuracie'];
   return out;
 }
 
@@ -209,6 +212,8 @@ async function sync() {
     }
     const j = await api({ action: 'all' });
     S.tx = Array.isArray(j.tx) ? j.tx : [];
+    if (Array.isArray(j.deals)) S.deals = j.deals;
+    if (j.dealsScanned) S.dealsScanned = j.dealsScanned;
     if (j.settings) S.settings = normalizeSettings(j.settings);
     S.queue.forEach(applyOp); // zmeny urobené počas synchronizácie
     S.lastSync = Date.now();
@@ -248,9 +253,9 @@ const view = document.getElementById('view');
 function render() {
   document.getElementById('monthLabel').textContent = monthLabel(ui.month);
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
-  document.querySelector('.top .month').style.visibility = ui.tab === 'settings' ? 'hidden' : 'visible';
-  document.getElementById('addBtn').hidden = ui.tab === 'settings' || ui.tab === 'fixed';
-  const r = { overview: renderOverview, tx: renderTx, fixed: renderFixed, settings: renderSettings }[ui.tab];
+  document.querySelector('.top .month').style.visibility = ui.tab === 'settings' || ui.tab === 'deals' ? 'hidden' : 'visible';
+  document.getElementById('addBtn').hidden = ui.tab === 'settings' || ui.tab === 'fixed' || ui.tab === 'deals';
+  const r = { overview: renderOverview, tx: renderTx, fixed: renderFixed, deals: renderDeals, settings: renderSettings }[ui.tab];
   view.innerHTML = r();
 }
 
@@ -345,6 +350,44 @@ function renderFixed() {
   <p class="hint" style="margin-top:12px">Odškrtni, čo si tento mesiac už zaplatil. V prehľade sa pevné platby rátajú vždy celé.</p>`;
 }
 
+function fmtDay(d) {
+  if (!d) return '';
+  const x = new Date(String(d).slice(0, 10) + 'T12:00');
+  return isNaN(x) ? String(d) : x.getDate() + '. ' + (x.getMonth() + 1) + '.';
+}
+
+function renderDeals() {
+  const deals = (S.deals || []).slice();
+  const scanned = S.dealsScanned ? 'naposledy ' + new Date(S.dealsScanned).toLocaleString('sk-SK', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'zatiaľ neskenované';
+  const head = `<div class="section-h"><h2>Akcie</h2><span>${esc(scanned)}</span></div>`;
+  if (!deals.length) {
+    return head + `<div class="empty"><b>Zatiaľ žiadne akcie</b>
+      ${S.dealsScanned ? 'Z tvojich sledovaných produktov teraz nič nie je v zľave.' : 'Akcie sa načítajú, keď skript prvýkrát prezrie obchody.'}<br>
+      Sledované produkty upravíš v Nastaveniach.</div>`;
+  }
+  const order = (S.settings.watchlist || []).map(w => w.toLowerCase());
+  const groups = {};
+  deals.forEach(d => { const k = String(d.term || 'ostatné').toLowerCase(); (groups[k] = groups[k] || []).push(d); });
+  const keys = Object.keys(groups).sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  });
+  return head + keys.map(k => {
+    const rows = groups[k].sort((a, b) => (Number(a.price) || 999) - (Number(b.price) || 999));
+    return `<div class="day"><span>${esc(k.charAt(0).toUpperCase() + k.slice(1))}</span><span>${rows.length}×</span></div>
+    <div class="list">${rows.map(d => {
+      const old = Number(d.oldPrice) > Number(d.price) ? `<s>${money(Number(d.oldPrice))}</s> ` : '';
+      const valid = d.validTo ? 'do ' + fmtDay(d.validTo) : '';
+      const meta = [d.store, valid, d.discount].filter(Boolean).join(', ');
+      const tag = d.url ? 'a' : 'div';
+      return `<${tag} class="row deal"${d.url ? ` href="${esc(d.url)}" target="_blank" rel="noopener"` : ''}>
+        <span class="c" style="--c:var(--mint)"></span>
+        <span class="t"><b>${esc(d.name)}</b><small>${esc(meta)}</small></span>
+        <span class="a">${old}${Number(d.price) ? money(Number(d.price)) : ''}</span></${tag}>`;
+    }).join('')}</div>`;
+  }).join('');
+}
+
 function renderSettings() {
   const s = S.settings;
   const catRows = s.categories.filter(c => !NOT_SPENDING.includes(c.id)).map(c => `
@@ -386,6 +429,10 @@ function renderSettings() {
   <p class="hint">Použije sa, kým v danom mesiaci nezapíšeš skutočný príjem.</p>
   ${listRows(s.income, 'inc')}
   <div class="btns"><button class="btn small" data-act="add-inc">Pridať príjem</button></div>
+
+  <div class="section-h"><h2>Sledované produkty</h2><span>pre Akcie</span></div>
+  <label class="field"><span>Čo kupuješ pravidelne, oddelené čiarkou</span>
+    <input class="input" value="${esc((s.watchlist || []).join(', '))}" data-watch placeholder="hell, rožok, šunka"></label>
 
   <div class="section-h"><h2>Dáta</h2></div>
   <div class="btns">
@@ -534,6 +581,7 @@ view.addEventListener('input', e => {
   else if (d.fixAmt) find(s.fixed, d.fixAmt).amount = parseMoney(el.value);
   else if (d.incName) find(s.income, d.incName).name = el.value;
   else if (d.incAmt) find(s.income, d.incAmt).amount = parseMoney(el.value);
+  else if ('watch' in d) s.watchlist = el.value.split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   else return;
   // Uloží sa bez prekreslenia, aby písanie neskákalo.
   clearTimeout(settingsTimer);
