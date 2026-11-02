@@ -261,6 +261,7 @@ function renderOverview() {
   let sub;
   if (dl > 0 && d.left > 0) sub = `To je <b>${money(d.left / dl)}</b> na deň do konca mesiaca.`;
   else if (over) sub = `Si o <b>${money(-d.left)}</b> v mínuse oproti príjmu.`;
+  else if (dl > 0) sub = 'Zatiaľ tu nie je príjem ani výdavky.';
   else sub = 'Mesiac je za tebou.';
   if (d.incomeLogged === 0 && d.incomeExpected > 0) sub += '<br>Počítam s očakávaným príjmom, kým nezapíšeš skutočný.';
 
