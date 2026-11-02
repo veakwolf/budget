@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rozpočet</title>
+<meta name="theme-color" content="#141933" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F3F4FA" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rozpočet">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="month">
+    <button class="icon-btn" id="prevMonth" aria-label="Predchádzajúci mesiac">‹</button>
+    <h1 id="monthLabel">Mesiac</h1>
+    <button class="icon-btn" id="nextMonth" aria-label="Nasledujúci mesiac">›</button>
+  </div>
+  <button class="sync" id="syncBtn" aria-label="Synchronizovať">
+    <span class="dot" id="syncDot"></span><span id="syncText">…</span>
+  </button>
+</header>
+
+<main id="view" tabindex="-1"></main>
+
+<button class="fab" id="addBtn" aria-label="Pridať platbu">+</button>
+
+<nav class="tabs" aria-label="Sekcie">
+  <button data-tab="overview" class="on">Prehľad</button>
+  <button data-tab="tx">Platby</button>
+  <button data-tab="fixed">Pevné</button>
+  <button data-tab="settings">Nastavenia</button>
+</nav>
+
+<div class="sheet-wrap" id="sheetWrap" hidden>
+  <div class="scrim" data-close></div>
+  <form class="sheet" id="sheet" autocomplete="off"></form>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
