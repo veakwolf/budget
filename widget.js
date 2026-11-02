@@ -48,16 +48,16 @@ function compute(data) {
     return 'ostatne';
   };
   const catOf = t => (cats.find(c => c.id === t.category) ? t.category : guess(t.merchant));
-  const incomeLogged = tx.filter(t => t.amount > 0).reduce((a, t) => a + Number(t.amount), 0);
+  const incomeLogged = tx.filter(t => t.amount > 0 && t.category !== 'sporenie').reduce((a, t) => a + Number(t.amount), 0);
   const incomeExpected = (s.income || []).reduce((a, i) => a + Number(i.amount || 0), 0);
-  const income = incomeLogged > 0 ? incomeLogged : incomeExpected;
+  const income = Math.max(incomeLogged, incomeExpected);
   const fixed = (s.fixed || []).reduce((a, f) => a + Number(f.amount || 0), 0);
   const byCat = {};
   let variable = 0;
   for (const t of tx) {
     if (t.amount >= 0) continue;
     const c = catOf(t);
-    if (c === 'pevne') continue;
+    if (c === 'pevne' || c === 'sporenie') continue;
     byCat[c] = (byCat[c] || 0) - Number(t.amount);
     variable -= Number(t.amount);
   }
@@ -65,7 +65,7 @@ function compute(data) {
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysLeft = lastDay - now.getDate() + 1;
   const envs = cats
-    .filter(c => c.id !== 'pevne' && Number(c.limit) > 0)
+    .filter(c => c.id !== 'pevne' && c.id !== 'sporenie' && Number(c.limit) > 0)
     .map(c => ({ name: c.name, color: c.color, limit: Number(c.limit), left: Number(c.limit) - (byCat[c.id] || 0) }))
     .sort((a, b) => a.left / a.limit - b.left / b.limit);
   return { left, perDay: daysLeft > 0 ? left / daysLeft : 0, envs };

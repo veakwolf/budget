@@ -62,6 +62,7 @@ function normalizeSettings(s) {
   }));
   if (!out.categories.find(c => c.id === 'ostatne')) out.categories.push({ id: 'ostatne', name: 'Ostatné', limit: 0, color: '#9A9CC0', keywords: [] });
   if (!out.categories.find(c => c.id === 'pevne')) out.categories.push({ id: 'pevne', name: 'Pevné platby', limit: 0, color: '#6B7099', keywords: [] });
+  if (!out.categories.find(c => c.id === 'sporenie')) out.categories.push({ id: 'sporenie', name: 'Sporenie a presuny', limit: 0, color: '#6FD3E8', keywords: [] });
   out.fixed = (out.fixed || []).map(f => ({ id: String(f.id || uid()), name: String(f.name || ''), amount: Number(f.amount) || 0 }));
   out.income = (out.income || []).map(f => ({ id: String(f.id || uid()), name: String(f.name || ''), amount: Number(f.amount) || 0 }));
   out.paid = out.paid || {};
@@ -121,6 +122,7 @@ function guessCategory(merchant) {
   }
   return 'ostatne';
 }
+const NOT_SPENDING = ['pevne', 'sporenie'];
 function txCat(t) {
   return S.settings.categories.find(c => c.id === t.category) ? t.category : guessCategory(t.merchant);
 }
@@ -129,16 +131,17 @@ function txCat(t) {
 
 function monthData(key) {
   const tx = S.tx.filter(t => String(t.date).slice(0, 7) === key);
-  const incomeLogged = tx.filter(t => t.amount > 0).reduce((a, t) => a + t.amount, 0);
+  const incomeLogged = tx.filter(t => t.amount > 0 && t.category !== 'sporenie').reduce((a, t) => a + t.amount, 0);
   const incomeExpected = S.settings.income.reduce((a, i) => a + i.amount, 0);
-  const income = incomeLogged > 0 ? incomeLogged : incomeExpected;
+  // Kým nepríde celý príjem, počíta sa s očakávaným (drobné príjmy ho neprepíšu).
+  const income = Math.max(incomeLogged, incomeExpected);
   const fixed = S.settings.fixed.reduce((a, f) => a + f.amount, 0);
   const byCat = {};
   let variable = 0;
   for (const t of tx) {
     if (t.amount >= 0) continue;
     const c = txCat(t);
-    if (c === 'pevne') continue;
+    if (NOT_SPENDING.includes(c)) continue;
     byCat[c] = (byCat[c] || 0) - t.amount;
     variable -= t.amount;
   }
@@ -263,9 +266,9 @@ function renderOverview() {
   else if (over) sub = `Si o <b>${money(-d.left)}</b> v mínuse oproti príjmu.`;
   else if (dl > 0) sub = 'Zatiaľ tu nie je príjem ani výdavky.';
   else sub = 'Mesiac je za tebou.';
-  if (d.incomeLogged === 0 && d.incomeExpected > 0) sub += '<br>Počítam s očakávaným príjmom, kým nezapíšeš skutočný.';
+  if (d.incomeLogged < d.incomeExpected) sub += `<br>Počítam s očakávaným príjmom, zatiaľ prišlo ${money(d.incomeLogged)}.`;
 
-  const cats = S.settings.categories.filter(c => c.id !== 'pevne');
+  const cats = S.settings.categories.filter(c => !NOT_SPENDING.includes(c.id));
   const envs = cats.map(c => {
     const spent = d.byCat[c.id] || 0;
     if (!c.limit && !spent) return '';
@@ -318,13 +321,13 @@ function renderTx() {
     const daySum = rows.filter(t => t.amount < 0).reduce((a, t) => a - t.amount, 0);
     return `<div class="day"><span>${esc(dayLabel(k))}</span><span class="num">${daySum ? money(daySum) : ''}</span></div>
       <div class="list">${rows.map(t => {
-        const c = t.amount > 0 ? { name: 'Príjem', color: 'var(--mint)' } : cat(txCat(t));
+        const c = t.amount > 0 && t.category !== 'sporenie' ? { name: 'Príjem', color: 'var(--mint)' } : cat(txCat(t));
         const time = String(t.date).slice(11, 16);
         const meta = [c.name, time, t.source === 'applepay' ? 'Apple Pay' : ''].filter(Boolean).join(', ');
         return `<button class="row" data-tx="${esc(t.id)}" style="--c:${c.color}">
           <span class="c"></span>
           <span class="t"><b>${esc(t.merchant || c.name)}</b><small>${esc(meta)}${t.note ? ' – ' + esc(t.note) : ''}</small></span>
-          <span class="a${t.amount > 0 ? ' in' : ''}">${t.amount > 0 ? '+' : ''}${money(t.amount)}</span></button>`;
+          <span class="a${t.amount > 0 && t.category !== 'sporenie' ? ' in' : ''}">${t.amount > 0 ? '+' : ''}${money(t.amount)}</span></button>`;
       }).join('')}</div>`;
   }).join('');
   return `<div class="filter">${chips}</div>${html}`;
@@ -344,7 +347,7 @@ function renderFixed() {
 
 function renderSettings() {
   const s = S.settings;
-  const catRows = s.categories.filter(c => c.id !== 'pevne').map(c => `
+  const catRows = s.categories.filter(c => !NOT_SPENDING.includes(c.id)).map(c => `
     <div class="edit-row cat" style="--c:${c.color}">
       <span class="sw"></span>
       <input class="input" value="${esc(c.name)}" data-cat-name="${esc(c.id)}" aria-label="Názov kategórie">

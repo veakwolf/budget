@@ -1,5 +1,5 @@
 /* Offline režim: appka sa načíta aj bez internetu. Dáta idú do Google tabuľky mimo tohto cache. */
-const CACHE = 'rozpocet-v1';
+const CACHE = 'rozpocet-v2';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
