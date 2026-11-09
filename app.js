@@ -19,7 +19,8 @@ const DEFAULT_SETTINGS = {
   ],
   fixed: [],
   income: [],
-  paid: {}
+  paid: {},
+  payday: 9
 };
 
 const eur = new Intl.NumberFormat('sk-SK', { style: 'currency', currency: 'EUR' });
@@ -28,7 +29,7 @@ const eur0 = new Intl.NumberFormat('sk-SK', { style: 'currency', currency: 'EUR'
 /* ---------------- State ---------------- */
 
 let S = load();
-let ui = { tab: 'overview', month: monthKey(new Date()), filter: null };
+let ui = { tab: 'overview', month: currentPeriod(), filter: null };
 let syncing = false;
 let settingsTimer = null;
 
@@ -66,6 +67,7 @@ function normalizeSettings(s) {
   out.fixed = (out.fixed || []).map(f => ({ id: String(f.id || uid()), name: String(f.name || ''), amount: Number(f.amount) || 0 }));
   out.income = (out.income || []).map(f => ({ id: String(f.id || uid()), name: String(f.name || ''), amount: Number(f.amount) || 0 }));
   out.paid = out.paid || {};
+  out.payday = Math.min(28, Math.max(1, Math.round(Number(out.payday)) || 9));
   return out;
 }
 
@@ -99,10 +101,25 @@ function shiftMonth(key, d) {
   const [y, m] = key.split('-').map(Number);
   return monthKey(new Date(y, m - 1 + d, 1));
 }
+/* Rozpočtový mesiac začína dňom výplaty (napr. 9. 11. – 8. 12.). Kľúč „2026-11“ = obdobie od výplaty v novembri. */
+function payday() {
+  const n = Math.round(Number(S && S.settings && S.settings.payday));
+  return n >= 1 && n <= 28 ? n : 9;
+}
+function periodStart(key) { return key + '-' + pad(payday()); }
+function periodEnd(key) { return shiftMonth(key, 1) + '-' + pad(payday()); }
+function currentPeriod() {
+  const now = new Date();
+  const key = monthKey(now);
+  return now.getDate() >= payday() ? key : shiftMonth(key, -1);
+}
 function monthLabel(key) {
   const [y, m] = key.split('-').map(Number);
   const now = new Date();
-  return MONTHS[m - 1] + (y !== now.getFullYear() ? ' ' + y : '');
+  if (payday() === 1) return MONTHS[m - 1] + (y !== now.getFullYear() ? ' ' + y : '');
+  const a = new Date(y, m - 1, payday());
+  const b = new Date(y, m, payday() - 1);
+  return a.getDate() + '. ' + (a.getMonth() + 1) + '. – ' + b.getDate() + '. ' + (b.getMonth() + 1) + '.';
 }
 function dayLabel(dateStr) {
   const d = new Date(dateStr.slice(0, 10) + 'T12:00');
@@ -130,7 +147,8 @@ function txCat(t) {
 /* ---------------- Calculations ---------------- */
 
 function monthData(key) {
-  const tx = S.tx.filter(t => String(t.date).slice(0, 7) === key);
+  const from = periodStart(key), to = periodEnd(key);
+  const tx = S.tx.filter(t => { const d = String(t.date).slice(0, 10); return d >= from && d < to; });
   const incomeLogged = tx.filter(t => t.amount > 0 && t.category !== 'sporenie').reduce((a, t) => a + t.amount, 0);
   const incomeExpected = S.settings.income.reduce((a, i) => a + i.amount, 0);
   // Kým nepríde celý príjem, počíta sa s očakávaným (drobné príjmy ho neprepíšu).
@@ -150,10 +168,10 @@ function monthData(key) {
 }
 
 function daysLeft(key) {
-  const now = new Date();
-  if (key !== monthKey(now)) return 0;
-  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  return last - now.getDate() + 1;
+  if (key !== currentPeriod()) return 0;
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const end = new Date(periodEnd(key) + 'T12:00');
+  return Math.round((end - today) / 86400000);
 }
 
 /* ---------------- Sync ---------------- */
@@ -386,6 +404,8 @@ function renderSettings() {
   <p class="hint">Použije sa, kým v danom mesiaci nezapíšeš skutočný príjem.</p>
   ${listRows(s.income, 'inc')}
   <div class="btns"><button class="btn small" data-act="add-inc">Pridať príjem</button></div>
+  <label class="field" style="margin-top:14px"><span>Deň výplaty – od neho sa počíta rozpočtový mesiac</span>
+    <input class="input num" inputmode="numeric" value="${s.payday}" data-payday></label>
 
   <div class="section-h"><h2>Dáta</h2></div>
   <div class="btns">
@@ -534,6 +554,7 @@ view.addEventListener('input', e => {
   else if (d.fixAmt) find(s.fixed, d.fixAmt).amount = parseMoney(el.value);
   else if (d.incName) find(s.income, d.incName).name = el.value;
   else if (d.incAmt) find(s.income, d.incAmt).amount = parseMoney(el.value);
+  else if ('payday' in d) { s.payday = Math.min(28, Math.max(1, Math.round(parseMoney(el.value)) || 9)); ui.month = currentPeriod(); document.getElementById('monthLabel').textContent = monthLabel(ui.month); }
   else return;
   // Uloží sa bez prekreslenia, aby písanie neskákalo.
   clearTimeout(settingsTimer);

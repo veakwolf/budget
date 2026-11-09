@@ -1,9 +1,7 @@
-// Rozpočet – widget pre appku Scriptable (iPhone)
-// Pri prvom spustení sa opýta na adresu Google skriptu a kľúč a uloží ich do Keychainu v telefóne.
-// V tomto súbore nie sú žiadne tajné údaje.
+// Rozpočet – jadro widgetu. Načítava ho malý zavádzač v Scriptable (widget-loader.js),
+// takže zmeny tu sa do widgetu dostanú samy. Žiadne tajné údaje tu nie sú.
+// Premenné URL_SKRIPTU a KLUC dodá zavádzač.
 
-const K_URL = 'rozpocet_url';
-const K_TOKEN = 'rozpocet_token';
 const C = {
   bg: new Color('#141933'),
   text: new Color('#ECEAF6'),
@@ -40,8 +38,13 @@ function compute(data) {
   const s = data.settings || {};
   const cats = s.categories || [];
   const now = new Date();
-  const key = now.getFullYear() + '-' + pad(now.getMonth() + 1);
-  const tx = (data.tx || []).filter(t => String(t.date).slice(0, 7) === key);
+  const pd = Math.min(28, Math.max(1, Math.round(Number(s.payday)) || 9));
+  let y = now.getFullYear(), m = now.getMonth();
+  if (now.getDate() < pd) { m -= 1; if (m < 0) { m = 11; y -= 1; } }
+  const startD = new Date(y, m, pd), endD = new Date(y, m + 1, pd);
+  const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const from = iso(startD), to = iso(endD);
+  const tx = (data.tx || []).filter(t => { const d = String(t.date).slice(0, 10); return d >= from && d < to; });
   const guess = m => {
     const low = String(m || '').toLowerCase();
     for (const c of cats) for (const k of c.keywords || []) if (k && low.includes(String(k).toLowerCase())) return c.id;
@@ -62,8 +65,8 @@ function compute(data) {
     variable -= Number(t.amount);
   }
   const left = income - fixed - variable;
-  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const daysLeft = lastDay - now.getDate() + 1;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysLeft = Math.round((endD - today) / 86400000);
   const envs = cats
     .filter(c => c.id !== 'pevne' && c.id !== 'sporenie' && Number(c.limit) > 0)
     .map(c => ({ name: c.name, color: c.color, limit: Number(c.limit), left: Number(c.limit) - (byCat[c.id] || 0) }))
@@ -141,40 +144,18 @@ function build(r, family, error) {
   return w;
 }
 
-async function main() {
-  if (config.runsInApp && (!Keychain.contains(K_URL) || !Keychain.contains(K_TOKEN) || args.queryParameters.setup)) {
-    await setup();
-  } else if (config.runsInApp) {
-    const a = new Alert();
-    a.title = 'Rozpočet widget';
-    a.addAction('Zobraziť náhľad');
-    a.addAction('Zmeniť adresu a kľúč');
-    a.addCancelAction('Zavrieť');
-    const pick = await a.present();
-    if (pick === 1) await setup();
-    if (pick === -1) return Script.complete();
-  }
 
-  const family = config.widgetFamily || 'medium';
-  let widget;
-  if (!Keychain.contains(K_URL) || !Keychain.contains(K_TOKEN)) {
-    widget = build(null, family, 'Otvor Scriptable a nastav adresu a kľúč.');
-  } else {
-    try {
-      const url = Keychain.get(K_URL) + '?action=all&token=' + encodeURIComponent(Keychain.get(K_TOKEN));
-      const req = new Request(url);
-      req.timeoutInterval = 20;
-      const data = await req.loadJSON();
-      if (!data.ok) throw new Error(data.error || 'Chyba servera');
-      widget = build(compute(data), family);
-    } catch (e) {
-      widget = build(null, family, 'Nepodarilo sa načítať: ' + e.message);
-    }
-  }
-
-  if (config.runsInWidget) Script.setWidget(widget);
-  else await widget.presentMedium();
-  Script.complete();
+const family = config.widgetFamily || 'medium';
+let widget;
+try {
+  const req = new Request(URL_SKRIPTU + '?action=all&token=' + encodeURIComponent(KLUC));
+  req.timeoutInterval = 20;
+  const data = await req.loadJSON();
+  if (!data.ok) throw new Error(data.error || 'Chyba servera');
+  widget = build(compute(data), family);
+} catch (e) {
+  widget = build(null, family, 'Nepodarilo sa načítať: ' + e.message);
 }
-
-await main();
+if (config.runsInWidget) Script.setWidget(widget);
+else await widget.presentMedium();
+Script.complete();
