@@ -20,7 +20,8 @@ const DEFAULT_SETTINGS = {
   fixed: [],
   income: [],
   paid: {},
-  payday: 9
+  payday: 9,
+  salaryMin: 600
 };
 
 const eur = new Intl.NumberFormat('sk-SK', { style: 'currency', currency: 'EUR' });
@@ -68,6 +69,7 @@ function normalizeSettings(s) {
   out.income = (out.income || []).map(f => ({ id: String(f.id || uid()), name: String(f.name || ''), amount: Number(f.amount) || 0 }));
   out.paid = out.paid || {};
   out.payday = Math.min(28, Math.max(1, Math.round(Number(out.payday)) || 9));
+  out.salaryMin = Number(out.salaryMin) > 0 ? Number(out.salaryMin) : 600;
   return out;
 }
 
@@ -101,25 +103,43 @@ function shiftMonth(key, d) {
   const [y, m] = key.split('-').map(Number);
   return monthKey(new Date(y, m - 1 + d, 1));
 }
-/* Rozpočtový mesiac začína dňom výplaty (napr. 9. 11. – 8. 12.). Kľúč „2026-11“ = obdobie od výplaty v novembri. */
+/* Rozpočtový mesiac začína v momente, keď príde výplata (príjem nad nastavenú hranicu).
+   Kľúč „2026-11“ = obdobie od novembrovej výplaty po decembrovú. Kým výplata nepríde, beží starý mesiac.
+   Ak v niektorom minulom mesiaci výplata zapísaná nie je, použije sa náhradný deň výplaty. */
 function payday() {
   const n = Math.round(Number(S && S.settings && S.settings.payday));
   return n >= 1 && n <= 28 ? n : 9;
 }
-function periodStart(key) { return key + '-' + pad(payday()); }
-function periodEnd(key) { return shiftMonth(key, 1) + '-' + pad(payday()); }
+function salaryMin() {
+  const n = Number(S && S.settings && S.settings.salaryMin);
+  return n > 0 ? n : 600;
+}
+function salaryAt(key) {
+  const hits = (S.tx || []).filter(t => t.amount >= salaryMin() && t.category !== 'sporenie' && String(t.date).slice(0, 7) === key)
+    .map(t => String(t.date).slice(0, 16)).sort();
+  return hits[0] || null;
+}
+function periodStart(key) { return salaryAt(key) || key + '-' + pad(payday()); }
+function periodEnd(key) {
+  const next = shiftMonth(key, 1);
+  const sal = salaryAt(next);
+  if (sal) return sal;
+  return next >= monthKey(new Date()) ? '9999-12-31' : next + '-' + pad(payday());
+}
+function expectedEnd(key) { return salaryAt(shiftMonth(key, 1)) || shiftMonth(key, 1) + '-' + pad(payday()); }
 function currentPeriod() {
   const now = new Date();
   const key = monthKey(now);
-  return now.getDate() >= payday() ? key : shiftMonth(key, -1);
+  return salaryAt(key) ? key : shiftMonth(key, -1);
 }
 function monthLabel(key) {
   const [y, m] = key.split('-').map(Number);
   const now = new Date();
   if (payday() === 1) return MONTHS[m - 1] + (y !== now.getFullYear() ? ' ' + y : '');
-  const a = new Date(y, m - 1, payday());
-  const b = new Date(y, m, payday() - 1);
-  return a.getDate() + '. ' + (a.getMonth() + 1) + '. – ' + b.getDate() + '. ' + (b.getMonth() + 1) + '.';
+  const a = new Date(periodStart(key).slice(0, 10) + 'T12:00');
+  const running = periodEnd(key) === '9999-12-31';
+  const b = new Date(expectedEnd(key).slice(0, 10) + 'T12:00'); b.setDate(b.getDate() - 1);
+  return a.getDate() + '. ' + (a.getMonth() + 1) + '. – ' + (running && b < new Date() ? 'dnes' : b.getDate() + '. ' + (b.getMonth() + 1) + '.');
 }
 function dayLabel(dateStr) {
   const d = new Date(dateStr.slice(0, 10) + 'T12:00');
@@ -148,7 +168,7 @@ function txCat(t) {
 
 function monthData(key) {
   const from = periodStart(key), to = periodEnd(key);
-  const tx = S.tx.filter(t => { const d = String(t.date).slice(0, 10); return d >= from && d < to; });
+  const tx = S.tx.filter(t => { const d = String(t.date).slice(0, 16); return d >= from && d < to; });
   const incomeLogged = tx.filter(t => t.amount > 0 && t.category !== 'sporenie').reduce((a, t) => a + t.amount, 0);
   const incomeExpected = S.settings.income.reduce((a, i) => a + i.amount, 0);
   // Kým nepríde celý príjem, počíta sa s očakávaným (drobné príjmy ho neprepíšu).
@@ -170,8 +190,8 @@ function monthData(key) {
 function daysLeft(key) {
   if (key !== currentPeriod()) return 0;
   const today = new Date(); today.setHours(12, 0, 0, 0);
-  const end = new Date(periodEnd(key) + 'T12:00');
-  return Math.round((end - today) / 86400000);
+  const end = new Date(expectedEnd(key).slice(0, 10) + 'T12:00');
+  return Math.max(1, Math.round((end - today) / 86400000));
 }
 
 /* ---------------- Sync ---------------- */
@@ -226,9 +246,11 @@ async function sync() {
       save();
     }
     const j = await api({ action: 'all' });
+    const wasCurrent = ui.month === currentPeriod();
     S.tx = Array.isArray(j.tx) ? j.tx : [];
     if (j.settings) S.settings = normalizeSettings(j.settings);
     S.queue.forEach(applyOp); // zmeny urobené počas synchronizácie
+    if (wasCurrent) ui.month = currentPeriod();
     S.lastSync = Date.now();
     save();
     setStatus('ok');
@@ -404,7 +426,9 @@ function renderSettings() {
   <p class="hint">Použije sa, kým v danom mesiaci nezapíšeš skutočný príjem.</p>
   ${listRows(s.income, 'inc')}
   <div class="btns"><button class="btn small" data-act="add-inc">Pridať príjem</button></div>
-  <label class="field" style="margin-top:14px"><span>Deň výplaty – od neho sa počíta rozpočtový mesiac</span>
+  <label class="field" style="margin-top:14px"><span>Nový mesiac začne, keď príde príjem aspoň</span>
+    <input class="input num" inputmode="decimal" value="${s.salaryMin}" data-salarymin></label>
+  <label class="field"><span>Náhradný deň výplaty (ak výplata nie je zapísaná)</span>
     <input class="input num" inputmode="numeric" value="${s.payday}" data-payday></label>
 
   <div class="section-h"><h2>Dáta</h2></div>
@@ -554,6 +578,7 @@ view.addEventListener('input', e => {
   else if (d.fixAmt) find(s.fixed, d.fixAmt).amount = parseMoney(el.value);
   else if (d.incName) find(s.income, d.incName).name = el.value;
   else if (d.incAmt) find(s.income, d.incAmt).amount = parseMoney(el.value);
+  else if ('salarymin' in d) { s.salaryMin = parseMoney(el.value) || 600; }
   else if ('payday' in d) { s.payday = Math.min(28, Math.max(1, Math.round(parseMoney(el.value)) || 9)); ui.month = currentPeriod(); document.getElementById('monthLabel').textContent = monthLabel(ui.month); }
   else return;
   // Uloží sa bez prekreslenia, aby písanie neskákalo.

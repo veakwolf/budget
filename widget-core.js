@@ -39,12 +39,19 @@ function compute(data) {
   const cats = s.categories || [];
   const now = new Date();
   const pd = Math.min(28, Math.max(1, Math.round(Number(s.payday)) || 9));
-  let y = now.getFullYear(), m = now.getMonth();
-  if (now.getDate() < pd) { m -= 1; if (m < 0) { m = 11; y -= 1; } }
-  const startD = new Date(y, m, pd), endD = new Date(y, m + 1, pd);
-  const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-  const from = iso(startD), to = iso(endD);
-  const tx = (data.tx || []).filter(t => { const d = String(t.date).slice(0, 10); return d >= from && d < to; });
+  const minSal = Number(s.salaryMin) > 0 ? Number(s.salaryMin) : 600;
+  const all = data.tx || [];
+  const mk = d => d.getFullYear() + '-' + pad(d.getMonth() + 1);
+  const shift = (k, n) => { const [yy, mm] = k.split('-').map(Number); return mk(new Date(yy, mm - 1 + n, 1)); };
+  const salaryAt = k => all.filter(t => Number(t.amount) >= minSal && t.category !== 'sporenie' && String(t.date).slice(0, 7) === k)
+    .map(t => String(t.date).slice(0, 16)).sort()[0] || null;
+  const thisKey = mk(now);
+  const key = salaryAt(thisKey) ? thisKey : shift(thisKey, -1);
+  const from = salaryAt(key) || key + '-' + pad(pd);
+  const nextSal = salaryAt(shift(key, 1));
+  const to = nextSal || '9999-12-31';
+  const endD = new Date((nextSal || shift(key, 1) + '-' + pad(pd)).slice(0, 10) + 'T00:00');
+  const tx = all.filter(t => { const d = String(t.date).slice(0, 16); return d >= from && d < to; });
   const guess = m => {
     const low = String(m || '').toLowerCase();
     for (const c of cats) for (const k of c.keywords || []) if (k && low.includes(String(k).toLowerCase())) return c.id;
@@ -66,7 +73,7 @@ function compute(data) {
   }
   const left = income - fixed - variable;
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const daysLeft = Math.round((endD - today) / 86400000);
+  const daysLeft = Math.max(1, Math.round((endD - today) / 86400000));
   const envs = cats
     .filter(c => c.id !== 'pevne' && c.id !== 'sporenie' && Number(c.limit) > 0)
     .map(c => ({ name: c.name, color: c.color, limit: Number(c.limit), left: Number(c.limit) - (byCat[c.id] || 0) }))
